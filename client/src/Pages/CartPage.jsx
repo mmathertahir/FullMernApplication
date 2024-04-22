@@ -182,7 +182,8 @@ const CartPage = () => {
 
   // handleCheckout().then(handleResponse).catch(handleError);
 
-  const handleCheckout = () => {
+  const handleCheckout = (e) => {
+    e.preventDefault();
     axios
       .post(`http://localhost:5000/api/create-checkout-session`, {
         cartdata,

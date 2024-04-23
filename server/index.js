@@ -2,17 +2,21 @@ const env = require("dotenv").config();
 const connectDB = require("./config/db");
 const express = require("express");
 const cors = require("cors");
+const rawBodyParser = express.raw({ type: "application/json" });
 const cookieParser = require("cookie-parser");
-const bodyParser = require("body-parser");
+var getRawBody = require("raw-body");
+const mongoose = require("mongoose");
+const { json } = require("body-parser");
+
 const stripe = require("stripe")(
   "sk_test_51P67ZWSEwxHg0JTlSOdMmCTB86S82bpVeSpRspP99FTFbAmqq4zqGhTPaKhBvAd5E9YIQ1VfgJrOFg78CfPuXtYX00PtCbsdzq"
 );
 
 const app = express();
 connectDB();
-
-app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: false }));
+
 app.use(cookieParser());
 
 app.use(cors());
@@ -22,6 +26,7 @@ app.use("/", require("./routes/authRoutes"));
 app.use("/", require("./routes/refresh"));
 app.use("/", require("./routes/logoutRoute"));
 app.use("/", require("./routes/ProductRoutes/CategoryRoutes/CategoryRoute"));
+
 const endpointSecret = "whsec_KaHIBI9nAqK3SSP9aoKFCfnNBTkxGz8E";
 
 app.post("/api/create-checkout-session", async (req, res) => {
@@ -66,50 +71,65 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 });
 
-app.post(
-  "/stripe-webhook",
-  bodyParser.raw({ type: "application/json" }),
-  async (req, res) => {
-    const reqObj = req.body;
+app.post("/stripe-webhook", rawBodyParser, async (req, res) => {
+  const payload = JSON.stringify(req.body);
+  console.log(payload, "Pay Load From");
+  const sig = req.headers["stripe-signature"];
+  // Replace with your actual webhook secret
 
-    const payload = JSON.stringify(req.body);
+  let event;
 
-    console.log(reqObj, "Object Request");
-    console.log(payload, "Pay Load From");
-    const sig = req.headers["stripe-signature"];
-    let event;
+  try {
+    event = stripe.webhooks.constructEvent(payload, sig, endpointSecret, {
+      // Set the stripeVersion as per your requirement
+      stripeVersion: "2020-08-27",
+    });
 
-    try {
-      // event = stripe.webhooks.constructEvent(payload, sig, endpointSecret);
-      //  event = stripe.webhooks.constructEvent(req.rawBody, sig, endpointSecret);
-      console.log(payload, "Raw Body Data");
-    } catch (err) {
-      console.error("Webhook error:", err.message);
-      return res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      await createOrder(session);
-    }
-
-    res.status(200).end(); // Respond to the webhook request
+    console.log(req.body.toString(), "Raw Body Data"); // Logging the raw body data
+  } catch (err) {
+    console.error("Webhook error:", err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
   }
-);
+
+  if (event.type === "checkout.session.completed") {
+    const session = event.data.object;
+    await createOrder(session);
+  }
+
+  res.status(200).end();
+});
+
+const OrderSchema = new mongoose.Schema({
+  customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" }, // Assuming a Customer model
+  items: [
+    {
+      name: String,
+      quantity: Number,
+      price: Number,
+    },
+  ],
+});
+
+const Order = mongoose.model("Order", OrderSchema);
 
 async function createOrder(session) {
   const { line_items, customer } = session;
 
-  const order = new Order({
-    customer: customer,
-    items: line_items.data.map((item) => ({
-      name: item.description,
-      quantity: item.quantity,
-      price: item.amount_total / 100,
-    })),
-  });
+  try {
+    const order = new Order({
+      customer: customer,
+      items: line_items.data.map((item) => ({
+        name: item.description,
+        quantity: item.quantity,
+        price: item.amount_total / 100,
+      })),
+    });
 
-  await order.save();
+    await order.save();
+    console.log("Order created successfully:", order._id);
+  } catch (error) {
+    console.error("Error creating order:", error.message);
+  }
 }
 
 app.get("/", (req, res) => {

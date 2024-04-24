@@ -2,11 +2,9 @@ const env = require("dotenv").config();
 const connectDB = require("./config/db");
 const express = require("express");
 const cors = require("cors");
-const rawBodyParser = express.raw({ type: "application/json" });
 const cookieParser = require("cookie-parser");
-var getRawBody = require("raw-body");
+const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
-const { json } = require("body-parser");
 
 const stripe = require("stripe")(
   "sk_test_51P67ZWSEwxHg0JTlSOdMmCTB86S82bpVeSpRspP99FTFbAmqq4zqGhTPaKhBvAd5E9YIQ1VfgJrOFg78CfPuXtYX00PtCbsdzq"
@@ -18,6 +16,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
 app.use(cookieParser());
+// app.use(bodyParser.raw({ type: "application/json" }));
 
 app.use(cors());
 
@@ -36,18 +35,16 @@ app.post("/api/create-checkout-session", async (req, res) => {
 
   try {
     const lineItems = await Promise.all(
-      cartdata.map(async (item) => {
-        return {
-          price_data: {
-            currency: "inr",
-            product_data: {
-              name: item.title,
-            },
-            unit_amount: item.price * 100,
+      cartdata.map(async (item) => ({
+        price_data: {
+          currency: "inr",
+          product_data: {
+            name: item.title,
           },
-          quantity: item.quantity,
-        };
-      })
+          unit_amount: item.price * 100,
+        },
+        quantity: item.quantity,
+      }))
     );
 
     const session = await stripe.checkout.sessions.create({
@@ -56,7 +53,6 @@ app.post("/api/create-checkout-session", async (req, res) => {
       mode: "payment",
       success_url: "http://localhost:3000/success",
       cancel_url: "http://localhost:3000/cancel",
-
       metadata: {
         endpointUrl: "http://localhost:5000/stripe-webhook", // Your webhook endpoint URL
       },
@@ -71,33 +67,82 @@ app.post("/api/create-checkout-session", async (req, res) => {
   }
 });
 
-app.post("/stripe-webhook", rawBodyParser, async (req, res) => {
-  const payload = JSON.stringify(req.body);
-  console.log(payload, "Pay Load From");
-  const sig = req.headers["stripe-signature"];
-  // Replace with your actual webhook secret
+app.post(
+  "/stripe-webhook",
+  express.raw({ type: "application/json" }),
+  async (request, response) => {
+    // Retrieve the webhook secret from your endpoint object
+    const webhookSecret = "whsec_KaHIBI9nAqK3SSP9aoKFCfnNBTkxGz8E"; // Make sure to retrieve the secret from where you've stored it
+    const payload = JSON.stringify(request.body);
 
-  let event;
+    let sig = request.headers["stripe-signature"];
+    // Verify the webhook signature
+    // const payload = request.rawBody;
+    console.log(request.headers["stripe-signature"], "Headers coming");
+    console.log(sig, "Signature");
+    console.log(payload, "Psdede");
+    let event;
+    try {
+      event = stripe.webhooks.constructEvent(payload, sig, webhookSecret);
+    } catch (error) {
+      console.error("Webhook signature verification failed.", error);
+      return response.status(400).send("Webhook Error: Invalid signature.");
+    }
 
-  try {
-    event = stripe.webhooks.constructEvent(payload, sig, endpointSecret, {
-      // Set the stripeVersion as per your requirement
-      stripeVersion: "2020-08-27",
-    });
+    // Handle the webhook event
+    switch (event.type) {
+      case "payment_intent.payment_failed":
+        // Handle payment failure event
+        console.log("Payment failed:", event.data.object);
+        break;
+      case "payment_intent.succeeded":
+        // Handle successful payment event
+        console.log("Payment succeeded:", event.data.object);
+        break;
+      // Add cases for other event types as needed
+      default:
+        console.log(`Unhandled event type ${event.type}`);
+    }
 
-    console.log(req.body.toString(), "Raw Body Data"); // Logging the raw body data
-  } catch (err) {
-    console.error("Webhook error:", err.message);
-    return res.status(400).send(`Webhook Error: ${err.message}`);
+    // Return a response to acknowledge receipt of the event
+    response.json({ received: true });
   }
+);
 
-  if (event.type === "checkout.session.completed") {
-    const session = event.data.object;
-    await createOrder(session);
-  }
+// const rawBodyParser = express.raw({ type: "application/json" });
+// app.post("/stripe-webhook", rawBodyParser, async (req, res) => {
+//   console.log("Webhook hit"); // Debugging line
 
-  res.status(200).end();
-});
+//   const payload = JSON.stringify(req.body);
+
+//   console.log(payload, "Body LOad");
+//   const sig = req.headers["stripe-signature"];
+
+//   try {
+//     const event = stripe.webhooks.constructEvent(payload, sig, endpointSecret, {
+//       stripeVersion: "2020-08-27",
+//     });
+
+//     console.log(`Received event: ${event.type}`);
+
+//     res.status(200);
+
+//     console.log(event.type, "Event Type");
+//     setImmediate(async () => {
+//       try {
+//         if (event.type === "checkout.session.completed") {
+//           const session = event.data.object;
+//           await createOrder(session);
+//         }
+//       } catch (error) {
+//         console.error("Error creating order:", error.message);
+//       }
+//     });
+//   } catch (err) {
+//     console.error("Webhook error:", err.message);
+//     return res.status(400).send(`Webhook Error: ${err.message}`);
+//   }
+// });
 
 const OrderSchema = new mongoose.Schema({
   customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer" }, // Assuming a Customer model

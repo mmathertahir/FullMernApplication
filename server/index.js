@@ -74,16 +74,23 @@ app.post(
     // Retrieve the webhook secret from your endpoint object
     const webhookSecret = "whsec_KaHIBI9nAqK3SSP9aoKFCfnNBTkxGz8E"; // Make sure to retrieve the secret from where you've stored it
     const payload = JSON.stringify(request.body);
+    console.log("request started " + request, "request ended");
 
+    console.log(request.body, "body data");
     let sig = request.headers["stripe-signature"];
     // Verify the webhook signature
     // const payload = request.rawBody;
-    console.log(request.headers["stripe-signature"], "Headers coming");
+    sig=request.headers["stripe-signature"].split(",")[1];
+    console.log(request.headers["stripe-signature"], "Signature  coming");
     console.log(sig, "Signature");
-    console.log(payload, "Psdede");
+    console.log(payload, "Payload");
     let event;
     try {
-      event = stripe.webhooks.constructEvent(payload, sig, webhookSecret);
+      event = stripe.webhooks.constructEvent(
+        JSON.stringify(request.body),
+        sig,
+        webhookSecret
+      );
     } catch (error) {
       console.error("Webhook signature verification failed.", error);
       return response.status(400).send("Webhook Error: Invalid signature.");
